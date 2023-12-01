@@ -1,0 +1,207 @@
+<head>
+    <script src="https://cdn.mainnet.cash/mainnet-2.2.7.js"
+     integrity="sha384-FEm+nMi9flkSTCRJoI59DXe7X83dMxLKu4x8GyjAG2xova1YEiZdDkVhQD1zzWar"
+     crossorigin="anonymous"></script>
+
+     <!-- indexedDB plugin -->
+     <script src="https://cdn.mainnet.cash/indexeddb-storage/indexeddb-storage-2.2.7.js"
+     integrity="sha384-qqVFgmZr8EaZywDSVt4zYf435HWx1HNwmQlqIvIoMDLI/4shAMmHrr/FQooKY75N"
+     crossorigin="anonymous"></script>
+  </head>
+  <body>
+    <button onclick="getInfo()">balance</button> 
+    <button onclick="createSeed()">new seed wallet !overwrite!</button>
+    <button onclick="createNamed()">new named wallet !overwrite! !autosave!</button>
+    <button onclick="save()">save current wallet to indexedDB</button>
+    <button onclick="load()">load wallet from indexedDB</button>
+    <button onClick="getCoins()">get test coins for current wallet</button>
+    <button onClick="send()">send test coins</button>
+    <!-- <button onClick="advancedSend()">send test coins advanced</button> -->
+    <button onClick="getMax()">get max sendable coins</button>
+    <button onClick="sendMax()">send all test coins</button>
+    <div>note: the inputs are weird; make a change and click out to trigger binding</div>
+    <div>wallet name:</div>
+    <input type=”text” onchange="bindName(event)">
+    <div>wallet seed:</div>
+    <input type=”text” onchange="bindSeed(event)">
+    <div>deposit address to send to:</div>
+    <input type=”text” onchange="bindDepositTo(event)">
+    <div>deposit amount (sat):</div>
+    <input type=”text” onchange="bindDepositAmt(event)">
+    <div>deposit address qr of current wallet:</div>
+    <p style="text-align: center;">
+      <img src="https://cdn.mainnet.cash/wait.svg" style="width: 15em;" id="deposit">
+    </p>
+
+  
+    <script>
+      var wallet;
+      var walletName = "";
+      var walletSeed = "";
+      var depositTo = "";
+      var depositAmt = "";
+
+      // options
+      var utxoIds = "";
+      var slpSemiAware = false;
+      var changeAddress = "";
+      var queryBalance = true;
+      var awaitTransactionPropagation = true;
+      var feePaidBy = "change";
+      
+      function bindName(event) {
+        walletName = event.target.value
+      }
+      function bindSeed(event) {
+        walletSeed = event.target.value
+      }
+      function bindDepositTo(event) {
+        depositTo = event.target.value
+      }
+      function bindDepositAmt(event) {
+        depositAmt = event.target.value
+      }
+      function getInfo() {
+        wallet.getBalance().then((it) => console.log(it))
+        wallet.getBalance('usd').then((it) => console.log('usd: ' + it))
+        wallet.getBalance('bch').then((it) => console.log('bch: ' + it))
+        wallet.getBalance('sat').then((it) => console.log('sat: ' + it))
+        wallet.getHistory().then((it) => console.log(it))
+      }
+      async function createSeed() {
+        wallet = await TestNetWallet.fromSeed(walletSeed);
+        document.querySelector('#deposit').src = wallet.getDepositQr().src;
+        console.log(wallet)
+      }
+      async function createNamed() {
+        // idk if its bc there's a safeguard, but repeating names will spit out the same wallet
+        wallet = await TestNetWallet.named(walletName);
+        document.querySelector('#deposit').src = wallet.getDepositQr().src;
+        console.log(wallet)
+      }
+      async function save() {
+        if (wallet.walletType === 'seed') {
+          const seed = wallet.mnemonic;
+          const derivationPath = wallet.derivationPath;
+          const walletId = `seed:testnet:${seed}:${derivationPath}`;
+          await TestNetWallet.replaceNamed(walletName, walletId);
+          console.log("wallet saved")
+        } else {
+          console.log('current wallet is not made from seed')
+        }
+      }
+      async function load() {
+        if (await TestNetWallet.namedExists(walletName)) {
+          wallet = await TestNetWallet.named(walletName);
+          document.querySelector('#deposit').src = wallet.getDepositQr().src;
+          console.log("wallet loaded")
+          console.log(wallet)
+        } else {
+          console.log('wallet name is invalid')
+        }
+      }
+      function getCoins() {
+        fetch("https://rest-unstable.mainnet.cash/faucet/get_testnet_bch", {
+          method: "POST",
+          body: JSON.stringify({
+            cashaddr:	wallet.getDepositAddress(),
+          }),
+          headers: {
+            "Content-type": "application/json; charset=UTF-8"
+          }
+        })
+        .then((response) => response.json())
+        .then((json) => console.log(json))
+      }
+      async function send() {
+        const options = { queryBalance: false };
+
+        if (depositTo != "" && depositAmt != "") {
+          const txData = await wallet.send([
+            {
+              cashaddr: depositTo,
+              value: Number(depositAmt),
+              unit: 'sat',
+            }
+          ], options);
+          console.log("transaction info:")
+          console.log(txData)
+        }
+      }
+
+      // currently broken w/ error:
+      // A.reduce is not a function
+      async function advancedSend() {
+        const requests = [
+            {
+              cashaddr: depositTo,
+              value: Number(depositAmt),
+              unit: 'sat',
+            }
+          ]
+        const options = { queryBalance: false };
+
+        if (depositTo != "" && depositAmt != "") {
+          const encodedTransaction = await wallet.encodeTransaction(
+          requests, // send requests as in `send` method
+          false, // discard change
+          // ^^?????
+          options // options as described above
+          );
+
+          const txId = await wallet.submitTransaction(
+            encodedTransaction,
+            true // options.awaitTransactionPropagation
+          );
+          console.log("transaction info:")
+          console.log(txId)
+        }
+
+      }
+      async function sendMax() {
+        if (depositTo != "") {
+          const txData = await wallet.sendMax(depositTo);
+          console.log("transaction info:")
+          console.log(txData)
+        }
+      }
+      async function getMax() {
+        const utxos = await wallet.getAddressUtxos()
+        console.log(utxos)
+        // not necessary, but can mess with it
+        const sendRequestOptions = { slpSemiAware: false, utxoIds: utxos };
+        const options = { outputCount: 1, options: sendRequestOptions };
+        const maxAmount = await wallet.getMaxAmountToSend(options);
+        console.log(maxAmount)
+        console.log("you can send " + maxAmount + " coins (after network fees)")
+      }
+      document.addEventListener("DOMContentLoaded", async (event) => {
+        Object.assign(globalThis, await __mainnetPromise);
+        console.log("test net loaded")
+        console.log(TestNetWallet)
+        BaseWallet.StorageProvider = IndexedDBProvider;
+
+        wallet = await TestNetWallet.fromWIF(`cR7FgykvhLPXrK5AUWQxRD5ozaS8PjSahkxCwW2oRucup6wyJEYG`);
+        document.querySelector('#deposit').src = wallet.getDepositQr().src;
+        const watch = await TestNetWallet.watchOnly(wallet.getDepositAddress());
+        // do something w/ this
+
+        console.log('this is the default wallet:')
+        console.log(wallet)
+
+        console.log(`you can load the wallet with: \n\n` + 
+            `const wallet = await TestNetWallet.fromWif(\`${wallet.privateKeyWif}\`);\n\n` +
+            `Deposit at least 1267 TestNet satoshis to: ${wallet.getDepositAddress()}\n\n` +
+            `You can paste this into Electron Cash's 'Pay to' field: ${wallet.getDepositAddress()}?amount=0.00001267\n\n` +
+            `To run Electron Cash in TestNet mode, you need to start it with the --testnet command line flag\n` +
+            `Then you can use https://faucet.fullstack.cash/ to get some TestNet satoshis\n\n` + 
+            `Waiting until you deposit at least 0.00001267 TestNet BCH...\n`);
+
+        // can use `await wallet.waitForTransaction();``
+          let balance = await wallet.waitForBalance(1267, "sat");
+          console.log(balance)
+          console.log(`${balance} sats are available! Sending...`)
+      });
+    </script>
+  </body>
+  
